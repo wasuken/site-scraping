@@ -47,7 +47,7 @@
 
 (defn get-dom [url]
   ;; 大量にScrapingするときは５秒にする。
-  (Thread/sleep 1000)
+  (Thread/sleep 5000)
   (html/html-snippet (:body @(http/get url {:insecure? true}))))
 
 (defn url-in-page
@@ -59,9 +59,13 @@
                             [:a]))))
 
 (defn get-urls [dom]
-            (remove #(nil? (re-find (re-pattern "^http.*") %))
-                    (map #(:href (:attrs %))
-                         (html/select dom [:h3.entrylist-contents-title :a]))))
+  (remove #(nil? (re-find (re-pattern "^http.*") %))
+          (map #(:href (:attrs %))
+               (html/select dom [:h3.entrylist-contents-title :a]))))
+
+(defn multi-replace
+  [s r & patterns]
+  (reduce #(.replaceAll (.matcher %2 %1) r) s patterns))
 
 (defn convert-content-zenkaku-csv
   [url]
@@ -75,10 +79,24 @@
                                        (map #(:body @(http/get % {:insecure? true}))
                                             (get-urls (get-dom url)))))))
 
+(defn convert-content-csv
+  [url]
+  (clojure.string/join ","
+                       (mapcat #(map (fn [x] (:token x))
+                                     (morphological-analysis
+                                      (multi-replace % ""
+                                                     #"\n"
+                                                     #"<script.*?>.*?</script>"
+                                                     #"<style.*>.*?</style>"
+                                                     #"<.*?>")))
+                               (remove #(nil? %)
+                                       (map #(:body @(http/get % {:insecure? true}))
+                                            (get-urls (get-dom url)))))))
+
 (defn word-count-in-csv
   [words-path]
   (let [words-list (clojure.string/split (slurp words-path) #"," )
-        words-cnt-list (frequencies words-list)
+        words-cnt-list (frequencies (filter #(> (.length %) 4) words-list))
         words-set (seq (set words-list))]
     (take 100 (into (sorted-map-by (fn [k1 k2] (compare [(get words-cnt-list k2) k2]
                                                         [(get words-cnt-list k1) k1])))
@@ -93,15 +111,7 @@
           already urls
           cmd (first args)
           words-path "words.txt"]
-      ;; (doall (map #(println %)
-      ;;             (get-urls (get-dom url))))
       (cond (= cmd "csv")
-            (spit words-path (convert-content-zenkaku-csv url))
+            (spit "words.txt" (convert-content-csv url))
             (= cmd "analy")
-            (println (word-count-in-csv words-path)))
-
-      ;; (println
-      ;;  (doall (map #(:token %)
-      ;;              (map #(morphological-analysis %)
-      ;;                   (map #(get-dom %) (get-urls (get-dom url)))))))
-      )))
+            (println (word-count-in-csv words-path))))))
